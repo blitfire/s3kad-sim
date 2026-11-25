@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, VecDeque}};
+use std::{collections::{HashMap, VecDeque, hash_map::Entry}};
 
 struct Colour(u8, u8, u8);
 
@@ -35,13 +35,13 @@ impl S3Cache {
         }
     }
 
-    fn read(&mut self, id: u64) -> Option<&Colour> {
+    fn read(&mut self, id: u64) -> Option<&mut Colour> {
         let Some(obj) = self.data.get_mut(&id) else {
             // Doesn't exist: insert to small
             return None;
         };
         
-        if obj.ctrl & GHOST_MASK != 0 { // Should name the bitmasks as constants
+        if obj.ctrl & GHOST_MASK != 0 {
             // Is in the ghost queue: insert to main
             return None;
         }
@@ -50,29 +50,32 @@ impl S3Cache {
             obj.ctrl += 1;
         }
 
-        obj.data.as_ref()
+        obj.data.as_mut()
     }
 
-    fn insert(&mut self, id: u64) -> Result<&CacheObject, ()> {
+    fn insert(&mut self, id: u64) -> Result<Option<&mut Colour>, ()> {
         // eviction loop to make room? Seems like we would only need to remove one value
-        let Some(obj) = self.data.get_mut(&id) else {
-            self.small.push_front(id);
-            return Ok(self.data
-                .entry(id)
-                .or_insert(
+        match self.data.entry(id) {
+            Entry::Vacant(e) => {
+                self.small.push_front(id);
+                Ok(e.insert(
                     CacheObject { ctrl: 0, data: None }
                 )
-            );
-        };
+                .data
+                .as_mut())
+            }
+            Entry::Occupied(e) => {
+                let obj = e.into_mut();
+                if obj.ctrl & GHOST_MASK == 0 {
+                    return Err(());
+                }
 
-        if obj.ctrl & GHOST_MASK == 0 {
-            return Err(());
+                self.main.push_front(id);
+                obj.ctrl = 0;
+
+                Ok(obj.data.as_mut())
+            }
         }
-
-        // Does not need to be removed from Ghost queue, we just check the id when we evict from
-        // ghost and only count it if it the item has the flag set
-        self.main.push_front(id);
-        Ok(self.data.)
     }
 }
 
